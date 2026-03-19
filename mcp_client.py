@@ -124,7 +124,8 @@ async def main():
             print("Type a question, or use one of the following commands:")
             print("  /prompts                           - to list available prompts")
             print("  /prompt <prompt_name> \"args\"...  - to run a specific prompt")
-
+            print("  /resources                       - to list available resources")
+            print("  /resource <resource_uri>         - to load a resource for the agent")  
             while True:
                 message_to_agent = ""
                 user_input = input("\nYou: ").strip()
@@ -140,7 +141,35 @@ async def main():
                         message_to_agent = prompt_text
                     else:
                         continue
+                elif user_input.lower() == "/resources":
+                    await list_resources(session)
+                    continue
+                elif user_input.lower().startswith("/resource"):
+                    resource_content = await handle_resource(session, user_input)
+                    if resource_content:
+                        action_prompt = input('Resource loaded. What to do?').strip().lower()
+                        if action_prompt:
+                            message_to_agent = f"""
+                            CONTEXT from a loaded resource:
+                            ---
+                            {resource_content}
+                            ---
+                            TASK: {action_prompt}
+                            """
+                        else:
+                            print("No action specified. Adding resource content to conversation memory...")
+                            message_to_agent = f"""
+                            Please remember the following context for our conversation. Just acknowledge that you have received it.
+                            ---
+                            CONTEXT:
+                            {resource_content}
+                            ---
+                            """
+                    else:
+                        # If resource loading failed, loop back for next input
+                        continue
                 else:
+                    # For a normal chat message, the message is just the user's input
                     message_to_agent = user_input
 
                 if message_to_agent:
@@ -152,6 +181,42 @@ async def main():
                     except Exception as e:
                         print("Error:", e)
 
+async def list_resources(session):
+    try:
+        resource_response = await session.list_resources()
+        if not resource_response or not resource_response.resources:
+            print("No resources found on the MCP server.")
+            return
+        for resource in resource_response.resources:
+            print(f'Resource uri: {resource.uri}')
+            if resource.description:
+                print(f'  Description: {resource.description.strip()}')
+    except Exception as e:
+        print(f"Error fetching resources: {e}")
+
+async def handle_resource(session, command) -> str|None:
+    try:
+        parts = shlex.split(command)
+        if len(parts) != 2:
+            print("Usage: /resource <resource_uri>")
+            return None
+        
+        resource_uri = parts[1]
+        print(f"\n--- Fetching resource '{resource_uri}'... ---")
+
+        resource_response = await session.read_resource(resource_uri)
+        if not resource_response or not resource_response.contents:
+            print(f"Resource not found for '{resource_uri}'.")
+            return None 
+        text_parts = [content.text for content in resource_response.contents if hasattr(content, "text")]
+        if not text_parts:
+            print(f"Resource '{resource_uri}' does not contain text content.")
+            return None
+        resource_content = '\n'.join(text_parts)
+        print('Loaded successfully')
+        return resource_content
+    except Exception as e:
+        print(f"Error fetching resource: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
